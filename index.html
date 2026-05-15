@@ -1,0 +1,1138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Poke-RL-0 — Trust-Region Flow Matching for Real-World VLA Post-Training</title>
+  <meta name="description" content="An iterative real-world post-training loop for flow-based vision-language-action models, built around a unified trust-region flow matching objective (TRFO)." />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..700;1,8..60,300..700&family=Geist:wght@300..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" integrity="sha384-nB0miv6/jRmo5UMMR1wu3Gz6NLsoTkbqJghGIsx//Rlm+ZU03BU6SQNC66uf4l5+" crossorigin="anonymous">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" integrity="sha384-7zkQWkzuo3B5mTepMUcHkMB5jZaolc2xDwL6VFqjFALcbeS9Ggm/0T2VMfQVOsZK" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" integrity="sha384-43gviWU0YVjaDtb/GhzOouOXtZMP/7XUzwPTstBeZFe/+rCMvRwr4yROQP43s0Xk" crossorigin="anonymous" onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],throwOnError:false});"></script>
+
+<style>
+  /* ---------- Tokens ---------- */
+  :root{
+    --paper:        #F4F1E8;
+    --paper-soft:   #EBE7D9;
+    --ink:          #14130F;
+    --ink-2:        #5C5A52;
+    --ink-3:        #8B887D;
+    --rule:         #D6D1C2;
+    --rule-soft:    #E5E1D2;
+    --accent:       #B5432A;
+    --accent-ink:   #6E2614;
+    --highlight:    rgba(181, 67, 42, .08);
+
+    --serif:        "Source Serif 4", "Source Serif Pro", "Times New Roman", serif;
+    --sans:         "Geist", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+    --mono:         "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+    --max:          1240px;
+    --gutter:       clamp(20px, 4vw, 56px);
+  }
+
+  /* ---------- Reset ---------- */
+  *,*::before,*::after{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+  body{
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-weight: 400;
+    font-size: 17px;
+    line-height: 1.6;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "ss01","ss02","cv01","cv11";
+    overflow-x: hidden;
+  }
+  body::before{
+    content:"";
+    position:fixed; inset:0;
+    pointer-events:none;
+    z-index:1;
+    opacity:.35;
+    mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.08  0 0 0 0 0.08  0 0 0 0 0.06  0 0 0 0.18 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  }
+  a{color:inherit;text-decoration:none}
+  button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+  ::selection{background:var(--accent);color:var(--paper)}
+
+  /* ---------- Layout primitives ---------- */
+  .wrap{ max-width: var(--max); margin:0 auto; padding: 0 var(--gutter); position:relative; z-index:2}
+  .rule{ height:1px; background:var(--rule); border:0; margin:0 }
+  .eyebrow{
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+  }
+  .tag{
+    display:inline-flex; align-items:center; gap:8px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+  }
+  .tag::before{
+    content:""; width:6px; height:6px; background:var(--accent); border-radius:50%;
+    box-shadow:0 0 0 3px var(--highlight);
+  }
+
+  /* ---------- Top bar ---------- */
+  .topbar{
+    position:sticky; top:0; z-index:50;
+    background: color-mix(in oklab, var(--paper) 86%, transparent);
+    backdrop-filter: saturate(140%) blur(10px);
+    -webkit-backdrop-filter: saturate(140%) blur(10px);
+    border-bottom: 1px solid transparent;
+    transition: border-color .25s ease, background .25s ease;
+  }
+  .topbar.is-scrolled{ border-bottom-color: var(--rule); }
+  .topbar-row{
+    display:flex; align-items:center; justify-content:space-between;
+    height: 56px;
+  }
+  .brand{
+    display:flex; align-items:baseline; gap:10px;
+    font-family: var(--mono); font-size: 12px; letter-spacing:.1em; text-transform: uppercase;
+    color: var(--ink);
+  }
+  .brand .dot{ width:7px; height:7px; background: var(--accent); display:inline-block; transform: translateY(-1px) }
+  .brand .ver{ color: var(--ink-3) }
+  .nav{ display:flex; gap: 28px; align-items:center }
+  .nav a{
+    font-family: var(--mono); font-size: 11px; letter-spacing:.14em; text-transform: uppercase;
+    color: var(--ink-2); position:relative; padding: 6px 0;
+  }
+  .nav a:hover{ color: var(--ink) }
+  .nav a::after{
+    content:""; position:absolute; left:0; right:100%; bottom:0; height:1px;
+    background: var(--accent); transition: right .25s ease;
+  }
+  .nav a:hover::after{ right:0 }
+  @media (max-width: 720px){ .nav{ gap: 14px } .nav a{ font-size: 10px } }
+
+  /* ---------- Hero ---------- */
+  .hero{
+    padding: clamp(56px, 8vw, 112px) 0 clamp(28px, 4vw, 56px);
+    position:relative;
+  }
+  .hero-thumb{
+    position: absolute;
+    top: clamp(56px, 8vw, 112px);
+    right: var(--gutter);
+    width: clamp(160px, 18vw, 240px);
+    height: auto;
+    z-index: 3;
+    pointer-events: none;
+  }
+  @media (max-width: 720px){ .hero-thumb{ display: none } }
+  .thumb-ring{ fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-dasharray: 6 5; animation: ringspin 9s linear infinite }
+  .thumb-node-acc{ fill: var(--accent); stroke: var(--accent); stroke-width: 1 }
+  .thumb-node{ fill: var(--paper); stroke: var(--ink); stroke-width: 1.2 }
+  .thumb-trfo{ font-family: var(--serif); font-style: italic; font-size: 28px; fill: var(--accent); font-weight: 400; letter-spacing: -0.01em }
+  .thumb-label{ font-family: var(--mono); font-size: 7.5px; letter-spacing: .18em; text-transform: uppercase; fill: var(--ink-3) }
+  .hero-grid{
+    display:grid;
+    grid-template-columns: 88px 1fr;
+    gap: 0 clamp(20px, 4vw, 56px);
+    align-items: start;
+  }
+  @media (max-width: 720px){ .hero-grid{ grid-template-columns: 1fr } }
+
+  .gutter-mark{
+    font-family: var(--mono); font-size: 11px; letter-spacing:.14em;
+    color: var(--ink-3); padding-top: 6px;
+    position: relative;
+  }
+  .gutter-mark::before{
+    content:""; display:block; width:24px; height:1px; background: var(--ink); margin-bottom:14px;
+  }
+
+  .hero h1{
+    margin: 16px 0 0;
+    color: var(--ink);
+    font-weight: 400;
+  }
+  .hero h1 .paper-id{
+    display: block;
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 400;
+    font-size: clamp(56px, 8.4vw, 104px);
+    line-height: .95;
+    letter-spacing: -0.028em;
+    color: var(--accent);
+    font-variation-settings: "opsz" 60;
+    margin-bottom: 18px;
+  }
+  .hero h1 .paper-subtitle{
+    display: block;
+    font-family: var(--serif);
+    font-weight: 400;
+    font-style: normal;
+    font-size: clamp(20px, 2.2vw, 30px);
+    line-height: 1.22;
+    letter-spacing: -0.012em;
+    color: var(--ink);
+    max-width: 30em;
+    font-variation-settings: "opsz" 36;
+  }
+
+  .hero .lede{
+    margin-top: 28px;
+    max-width: 60ch;
+    font-size: 16px;
+    line-height: 1.6;
+    color: var(--ink-2);
+  }
+  .hero .lede strong{
+    font-weight: 500;
+    color: var(--ink);
+    background: linear-gradient(0deg, var(--highlight), var(--highlight)) no-repeat;
+    background-size: 100% 28%;
+    background-position: 0 92%;
+  }
+  .hero .lede em{ color: var(--accent-ink); font-style: italic }
+
+  /* Authors */
+  .meta{
+    margin-top: 40px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, max-content));
+    column-gap: 36px;
+    row-gap: 14px;
+  }
+  .author{
+    font-size: 14px;
+    line-height: 1.35;
+  }
+  .author .name{ display:block; color: var(--ink); font-weight: 500 }
+  .author .aff{ display:block; color: var(--ink-3); font-family: var(--mono); font-size: 10.5px; letter-spacing:.05em; margin-top: 2px }
+
+  .affs{
+    margin-top: 18px;
+    font-family: var(--mono); font-size: 11px; letter-spacing:.06em; color: var(--ink-2);
+    display:flex; flex-wrap:wrap; gap: 14px 28px;
+  }
+  .affs span sup{ color: var(--accent); font-weight: 500 }
+
+  /* CTAs */
+  .ctas{
+    margin-top: 36px;
+    display:flex; flex-wrap: wrap; gap: 10px;
+  }
+  .btn{
+    display:inline-flex; align-items:center; gap: 10px;
+    font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+    padding: 12px 16px;
+    border: 1px solid var(--ink);
+    color: var(--ink); background: transparent;
+    transition: background .2s ease, color .2s ease, border-color .2s ease, transform .2s ease;
+  }
+  .btn .ar{ display:inline-block; transition: transform .25s ease }
+  .btn:hover{ background: var(--ink); color: var(--paper); }
+  .btn:hover .ar{ transform: translate(2px,-2px) }
+  .btn.ghost{ border-color: var(--rule); color: var(--ink-2) }
+  .btn.ghost:hover{ background: var(--ink-2); color: var(--paper); border-color: var(--ink-2) }
+  .btn.accent{ border-color: var(--accent); color: var(--accent) }
+  .btn.accent:hover{ background: var(--accent); color: var(--paper); border-color: var(--accent) }
+
+  /* Hero ribbon */
+  .ribbon{
+    display:flex; flex-wrap:wrap; gap: 8px 28px;
+    margin-top: 56px;
+    padding-top: 18px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--mono); font-size: 11px; letter-spacing:.08em; color: var(--ink-2);
+  }
+  .ribbon b{ color: var(--ink); font-weight: 500 }
+
+  /* ---------- Section frame ---------- */
+  section{ padding: clamp(40px, 5vw, 72px) 0; position: relative }
+  .section-head{
+    display:grid; grid-template-columns: 88px 1fr; gap: 0 clamp(20px, 4vw, 56px);
+    align-items: end; margin-bottom: clamp(20px, 3vw, 40px);
+  }
+  @media (max-width: 720px){ .section-head{ grid-template-columns: 1fr } }
+  .section-head .num{
+    font-family: var(--mono); font-size: 11px; letter-spacing:.14em; color: var(--ink-3);
+  }
+  .section-head .num b{ color: var(--ink); font-weight: 500 }
+  .section-head h2{
+    font-family: var(--serif); font-weight: 400; font-style: normal;
+    font-size: clamp(30px, 4.2vw, 52px); line-height: 1.08; letter-spacing:-0.015em;
+    margin: 10px 0 0; max-width: 24ch;
+    font-variation-settings: "opsz" 60;
+  }
+  .section-head h2 em{ font-style: italic; color: var(--accent-ink) }
+
+  .section-body{
+    display:grid; grid-template-columns: 88px 1fr; gap: 0 clamp(20px, 4vw, 56px);
+  }
+  @media (max-width: 720px){ .section-body{ grid-template-columns: 1fr } }
+  .section-body > .gutter{
+    font-family: var(--mono); font-size: 11px; letter-spacing:.08em; color: var(--ink-3);
+  }
+
+  /* ---------- Videos ---------- */
+  .video-grid{
+    display:grid; grid-template-columns: repeat(2, 1fr); gap: 24px;
+  }
+  @media (max-width: 860px){ .video-grid{ grid-template-columns: 1fr } }
+  .video-card{
+    border: 1px solid var(--rule);
+    background: var(--paper-soft);
+    position: relative;
+    overflow: hidden;
+  }
+  .video-card .frame{
+    position: relative; width: 100%; aspect-ratio: 16/9;
+    background:
+      radial-gradient(120% 80% at 70% 30%, rgba(255,255,255,.7) 0%, rgba(255,255,255,0) 60%),
+      linear-gradient(135deg, #d9d4c2 0%, #c8c2ad 100%);
+    display:flex; align-items:center; justify-content:center;
+    overflow: hidden;
+  }
+  .video-card .frame::after{
+    content:""; position:absolute; inset:0;
+    background-image:
+      linear-gradient(0deg, transparent 50%, rgba(0,0,0,.04) 50%);
+    background-size: 100% 3px;
+    mix-blend-mode: multiply;
+    opacity:.5;
+  }
+  .video-card video{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block }
+  .video-card .badge{
+    position:absolute; top:14px; left:14px;
+    font-family: var(--mono); font-size: 10px; letter-spacing:.14em; text-transform:uppercase;
+    color: var(--ink); background: var(--paper);
+    padding: 6px 8px; border:1px solid var(--ink);
+  }
+  .video-card .play{
+    position: relative; z-index:2;
+    width: 64px; height: 64px; border-radius: 50%;
+    border: 1px solid var(--ink);
+    background: color-mix(in oklab, var(--paper) 70%, transparent);
+    display:flex; align-items:center; justify-content:center;
+    transition: transform .2s ease, background .2s ease;
+  }
+  .video-card .play svg{ width: 18px; height: 18px; transform: translateX(2px) }
+  .video-card:hover .play{ transform: scale(1.04); background: var(--paper) }
+  .video-card .caption{
+    display:flex; align-items:baseline; justify-content:space-between; gap: 16px;
+    padding: 16px 18px; border-top: 1px solid var(--rule);
+    background: var(--paper);
+  }
+  .video-card .caption .ttl{ font-size: 14px; color: var(--ink); font-weight: 500 }
+  .video-card .caption .sub{
+    font-family: var(--mono); font-size: 10.5px; letter-spacing:.1em; text-transform:uppercase;
+    color: var(--ink-3);
+  }
+
+  /* ---------- Method diagram ---------- */
+  .diagram-panel{
+    grid-column: 1 / -1;
+    background: var(--paper-soft);
+    border: 1px solid var(--rule);
+    padding: clamp(20px, 2.4vw, 36px);
+    position: relative;
+  }
+  .diagram-panel::before, .diagram-panel::after{
+    content:""; position:absolute; width: 8px; height:8px; border:1px solid var(--ink-3);
+  }
+  .diagram-panel::before{ top:-1px; left:-1px; border-right:0; border-bottom:0 }
+  .diagram-panel::after{  bottom:-1px; right:-1px; border-left:0; border-top:0 }
+  .diagram-panel .bar{
+    display:flex; align-items:center; justify-content:space-between; gap: 16px;
+    margin-bottom: 24px;
+  }
+  .diagram-panel .bar .lhs{ display:flex; align-items:center; gap: 14px }
+  .diagram-panel .bar .lhs .square{ width:14px; height:14px; border:1px solid var(--ink); position:relative }
+  .diagram-panel .bar .lhs .square::after{ content:""; position:absolute; inset:3px; background: var(--accent) }
+  .diagram-panel .bar .ttl{ font-family: var(--mono); font-size: 11px; letter-spacing:.14em; text-transform:uppercase; color: var(--ink) }
+  .diagram-panel .bar .meta{ font-family: var(--mono); font-size: 11px; color: var(--ink-3); letter-spacing:.06em }
+
+  .diagram-svg{ width: 100%; height: auto; display:block }
+
+  /* SVG token styles */
+  .d-rule{ stroke: #B7B1A0; stroke-width:1; fill:none }
+  .d-rule-soft{ stroke: #C8C2B0; stroke-width:1; fill:none }
+  .d-arrow{ stroke: var(--ink); stroke-width: 1.4; fill: none; marker-end: url(#arrow); }
+  .d-arrow-acc{ stroke: var(--accent); stroke-width: 1.8; fill: none; marker-end: url(#arrowAcc); }
+  .d-flow{ stroke: var(--accent); stroke-width: 2; fill:none; stroke-dasharray: 9 7; marker-end: url(#arrowAcc); animation: dashflow 1.4s linear infinite; }
+  .d-flow-thin{ stroke: var(--accent); stroke-width: 1.6; fill:none; stroke-dasharray: 7 6; marker-end: url(#arrowAcc); animation: dashflow 1.6s linear infinite; }
+  .d-loop{ stroke: var(--accent); stroke-width: 2.4; fill:none; stroke-dasharray: 10 7; marker-end: url(#arrowAcc); animation: dashflow 1.8s linear infinite; }
+  @keyframes dashflow{ to { stroke-dashoffset: -32 } }
+  .flywheel-ring{ fill: none; stroke: var(--accent); stroke-width: 2.6; stroke-dasharray: 22 14; animation: ringspin 9s linear infinite; }
+  @keyframes ringspin{ to { stroke-dashoffset: -360 } }
+  .panel-frame{ fill: none; stroke: var(--rule); stroke-width: 1 }
+  .node-box{ fill: var(--paper); stroke: var(--ink); stroke-width:1.2 }
+  .node-box-acc{ fill: var(--paper); stroke: var(--accent); stroke-width:1.6 }
+  .node-fill-soft{ fill: #EFEBDC; stroke: var(--rule); stroke-width: 1 }
+  .diag-eyebrow{ font-family: var(--mono); font-size: 14px; letter-spacing:.2em; text-transform:uppercase; fill: var(--ink-3) }
+  .box-name{ font-family: var(--serif); font-size: 26px; fill: var(--ink); font-weight: 400; letter-spacing: -0.005em }
+  .box-name-big{ font-family: var(--serif); font-size: 42px; fill: var(--ink); font-weight: 400; letter-spacing: -0.01em }
+  .box-sub{ font-family: var(--sans); font-size: 15px; fill: var(--ink-2) }
+  .box-sub-i{ font-family: var(--sans); font-size: 15px; fill: var(--ink-2); font-style: italic }
+  .flow-label{ font-family: var(--mono); font-size: 13px; letter-spacing:.08em; fill: var(--ink-2) }
+  .flow-label-acc{ font-family: var(--mono); font-size: 13px; letter-spacing:.12em; fill: var(--accent); text-transform: uppercase }
+  .task-name{ font-family: var(--serif); font-size: 22px; fill: var(--ink); font-weight: 400 }
+  .coming-soon{ font-family: var(--mono); font-size: 12px; letter-spacing:.18em; text-transform: uppercase; fill: var(--ink-3) }
+  .ring-name{ font-family: var(--serif); font-size: 22px; fill: var(--ink); font-weight: 400; font-style: italic }
+  .ring-name-acc{ font-family: var(--serif); font-size: 22px; fill: var(--accent-ink); font-weight: 400; font-style: italic }
+  .buffer-name{ font-family: var(--mono); font-size: 15px; letter-spacing:.18em; text-transform: uppercase; fill: var(--ink); font-weight: 500 }
+  .trainer-trfo{ font-family: var(--serif); font-style: italic; font-size: 72px; fill: var(--accent); font-weight: 400; letter-spacing: -0.018em }
+  .trainer-td{ font-family: var(--serif); font-style: italic; font-size: 28px; fill: var(--accent-ink); font-weight: 400 }
+  .trainer-sub{ font-family: var(--mono); font-size: 12px; letter-spacing:.16em; text-transform: uppercase; fill: var(--ink-2) }
+  .trainer-junction{ fill: #EBE7D9 }
+  .corner{ stroke: var(--ink-3); stroke-width: 1; fill: none }
+
+  /* ---------- Method body (In Detail) ---------- */
+  .detail-stack{
+    display:flex; flex-direction: column;
+    gap: clamp(28px, 4vw, 48px);
+  }
+  .detail-row{
+    display:grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: clamp(20px, 3vw, 40px);
+    align-items: start;
+    border-top: 1px solid var(--ink);
+    padding-top: 22px;
+  }
+  @media (max-width: 860px){ .detail-row{ grid-template-columns: 1fr } }
+  .detail-row .pillar{ min-width: 0 }
+  .pillar h3{
+    font-family: var(--serif); font-weight: 400; font-size: clamp(22px, 2.4vw, 30px); line-height: 1.2;
+    margin: 10px 0 14px; letter-spacing: -0.01em;
+    font-variation-settings: "opsz" 48;
+  }
+  .pillar p{ margin: 0 0 12px; color: var(--ink); font-size: 15px; line-height: 1.65 }
+  .pillar p .accent{ color: var(--accent-ink); font-weight: 500 }
+  .pillar .formula{
+    margin: 14px 0 4px;
+    padding: 14px 16px;
+    background: var(--paper-soft);
+    border-left: 2px solid var(--accent);
+    font-size: 14px;
+    overflow-x: auto;
+  }
+  .pillar .stamp{
+    display:inline-block; font-family: var(--mono); font-size: 10px; letter-spacing:.14em;
+    text-transform:uppercase; color: var(--ink-3); margin-bottom: 8px;
+  }
+  .pillar .stamp b{ color: var(--accent); font-weight: 500 }
+
+  /* ---------- Tasks ---------- */
+  .tasks{
+    display:grid; grid-template-columns: repeat(2, 1fr); gap: 24px;
+  }
+  @media (max-width: 720px){ .tasks{ grid-template-columns: 1fr } }
+  .task{
+    border: 1px solid var(--rule);
+    background: var(--paper-soft);
+    display:flex; flex-direction: column;
+    transition: transform .25s ease, border-color .25s ease;
+  }
+  .task:hover{ border-color: var(--ink); transform: translateY(-2px) }
+  .task .frame{
+    position: relative; width:100%; aspect-ratio: 16/9;
+    background:
+      radial-gradient(140% 90% at 50% 0%, rgba(255,255,255,.8) 0%, rgba(255,255,255,0) 50%),
+      linear-gradient(160deg, #d8d2c0 0%, #b9b29e 100%);
+    overflow:hidden;
+    display:flex; align-items:flex-end; justify-content: space-between;
+    padding: 12px;
+  }
+  .task .frame::after{
+    content:""; position:absolute; inset:0;
+    background-image: linear-gradient(0deg, transparent 50%, rgba(0,0,0,.04) 50%);
+    background-size: 100% 3px;
+    mix-blend-mode: multiply;
+    opacity: .55;
+  }
+  .task .frame video{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block }
+  .task .frame .num{
+    font-family: var(--mono); font-size: 10px; letter-spacing:.14em; color: var(--ink);
+    background: var(--paper); padding: 4px 6px; position: relative; z-index:2;
+  }
+  .task .frame .pending{
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3);
+    background: var(--paper); padding: 4px 6px; position: relative; z-index:2;
+  }
+  .task .body{ padding: 16px 18px 20px; border-top: 1px solid var(--rule); background: var(--paper) }
+  .task .body .ttl{
+    font-family: var(--serif); font-weight: 400; font-size: 22px; line-height: 1.15; letter-spacing:-0.01em;
+    margin: 4px 0 8px; font-variation-settings: "opsz" 30;
+  }
+  .task .body .desc{ font-size: 14px; color: var(--ink-2); margin: 0; line-height: 1.55 }
+  .task .body .stat{
+    margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--rule);
+    display:flex; align-items:baseline; justify-content: space-between; gap: 8px;
+  }
+  .task .body .stat .v{ font-family: var(--serif); font-size: 22px; line-height:1; color: var(--accent-ink); font-variation-settings:"opsz" 30 }
+  .task .body .stat .l{ font-family: var(--mono); font-size: 10px; letter-spacing:.12em; color: var(--ink-3); text-transform: uppercase }
+
+  /* ---------- Results ---------- */
+  .results-stack{
+    display:flex; flex-direction: column; gap: clamp(20px, 3vw, 36px);
+  }
+  .result-fig{
+    border: 1px solid var(--rule);
+    background: var(--paper);
+    overflow: hidden;
+  }
+  .result-fig .head{
+    display:flex; align-items:baseline; justify-content:space-between; gap: 16px;
+    padding: 16px 22px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .result-fig .head .eyebrow{
+    font-family: var(--mono); font-size: 11px; letter-spacing:.18em; text-transform:uppercase;
+    color: var(--ink-3);
+  }
+  .result-fig .head .title{
+    font-family: var(--serif); font-size: clamp(18px, 2vw, 22px); font-weight: 400; color: var(--ink);
+    letter-spacing: -0.005em;
+    font-variation-settings: "opsz" 36;
+  }
+  .result-fig .frame{
+    position: relative; width: 100%; aspect-ratio: 16/7;
+    background:
+      radial-gradient(140% 90% at 50% 0%, rgba(255,255,255,.75) 0%, rgba(255,255,255,0) 55%),
+      linear-gradient(160deg, #D8D2C0 0%, #B9B29E 100%);
+    display:flex; align-items:center; justify-content:center;
+    overflow: hidden;
+  }
+  .result-fig .frame::after{
+    content:""; position:absolute; inset:0;
+    background-image: linear-gradient(0deg, transparent 50%, rgba(0,0,0,.04) 50%);
+    background-size: 100% 3px;
+    mix-blend-mode: multiply;
+    opacity: .55;
+  }
+  .result-fig .frame .placeholder{
+    position: relative; z-index: 2;
+    font-family: var(--mono); font-size: 12px; letter-spacing:.2em; text-transform: uppercase;
+    color: var(--ink-2); background: var(--paper); padding: 8px 14px;
+    border: 1px solid var(--ink);
+  }
+  .result-fig .caption{
+    padding: 16px 22px 20px;
+    border-top: 1px solid var(--rule);
+    background: var(--paper);
+    font-size: 14px;
+    line-height: 1.55;
+    color: var(--ink-2);
+    max-width: 80ch;
+  }
+
+  /* ---------- BibTeX ---------- */
+  .bib{
+    border: 1px solid var(--ink);
+    background: var(--paper);
+    position: relative;
+  }
+  .bib .bar{
+    display:flex; justify-content: space-between; align-items: center;
+    padding: 10px 16px; border-bottom: 1px solid var(--ink);
+    background: var(--ink); color: var(--paper);
+  }
+  .bib .bar .l{ font-family: var(--mono); font-size: 11px; letter-spacing:.14em; text-transform:uppercase }
+  .bib .bar button.copy{
+    font-family: var(--mono); font-size: 10.5px; letter-spacing:.12em; text-transform:uppercase;
+    color: var(--paper); border:1px solid var(--paper); padding: 5px 10px;
+    transition: background .2s ease, color .2s ease;
+  }
+  .bib .bar button.copy:hover{ background: var(--paper); color: var(--ink) }
+  .bib .bar button.copy.is-ok{ background: var(--accent); color: var(--paper); border-color: var(--accent) }
+  .bib pre{
+    margin: 0; padding: 22px 24px;
+    font-family: var(--mono); font-size: 13px; line-height: 1.6; color: var(--ink);
+    white-space: pre; overflow-x: auto;
+  }
+
+  /* ---------- Footer ---------- */
+  footer{
+    margin-top: clamp(24px, 3vw, 40px);
+    border-top: 1px solid var(--rule);
+    padding: 28px 0 44px;
+  }
+  .foot{
+    display:grid; grid-template-columns: 88px 1fr auto; gap: 24px;
+    align-items: end;
+  }
+  @media (max-width: 720px){ .foot{ grid-template-columns: 1fr } }
+  .foot .l{ font-family: var(--mono); font-size: 11px; letter-spacing:.14em; color: var(--ink-3); text-transform:uppercase }
+  .foot .ack{ font-size: 14px; color: var(--ink-2); max-width: 56ch }
+  .foot .colophon{ font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); letter-spacing:.08em }
+
+  /* ---------- Reveal ---------- */
+  .reveal{ opacity: 0; transform: translateY(8px); transition: opacity .6s ease, transform .6s ease }
+  .reveal.is-in{ opacity: 1; transform: none }
+</style>
+</head>
+<body>
+
+<header class="topbar" id="topbar">
+  <div class="wrap topbar-row">
+    <a class="brand" href="#top">
+      <span class="dot"></span>
+      <span>Poke<span class="ver">·</span>RL<span class="ver">·</span>0</span>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="#videos">Videos</a>
+      <a href="#method">Method</a>
+      <a href="#tasks">Tasks</a>
+      <a href="#results">Results</a>
+      <a href="#cite">Cite</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div class="gutter-mark">
+        00<br/>Index
+      </div>
+      <div>
+        <span class="tag">Tsinghua TEA Lab × Poke Robotics · Preprint 2026</span>
+        <h1>
+          <span class="paper-id">Poke-RL-0</span>
+          <span class="paper-subtitle">Iterative Real-World Post-Training of Flow-Based VLAs<br/>with Trust-Region Flow Matching Optimization.</span>
+        </h1>
+
+        <p class="lede">
+          An iterative post-training loop for flow-based vision-language-action policies.
+          A unified <strong>TRFO objective</strong> turns demonstrations, human corrections, and autonomous rollouts —
+          successes <em>and</em> failures alike — into a single, stable policy update, bounded by a frozen reference within a trust region.
+        </p>
+
+        <div class="meta" id="authors">
+          <span class="author"><span class="name">[Author One]</span><span class="aff">¹ ²</span></span>
+          <span class="author"><span class="name">[Author Two]</span><span class="aff">¹</span></span>
+          <span class="author"><span class="name">[Author Three]</span><span class="aff">²</span></span>
+          <span class="author"><span class="name">[Author Four]</span><span class="aff">¹ ²</span></span>
+          <span class="author"><span class="name">[Senior Author]</span><span class="aff">¹</span></span>
+        </div>
+        <div class="affs">
+          <span><sup>1</sup> Tsinghua TEA Lab</span>
+          <span><sup>2</sup> Poke Robotics</span>
+          <span><sup>★</sup> Equal contribution</span>
+        </div>
+
+        <div class="ctas">
+          <a class="btn accent" href="#" aria-label="Read the paper">
+            Read paper <span class="ar">↗</span>
+          </a>
+          <a class="btn ghost" href="#videos" aria-label="Jump to videos">
+            Watch videos <span class="ar">↓</span>
+          </a>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <section id="videos" aria-labelledby="videos-h">
+    <div class="wrap section-head">
+      <div class="num">01<br/><b>Videos</b></div>
+      <h2 id="videos-h">Overview.</h2>
+    </div>
+    <div class="wrap section-body">
+      <div class="gutter">▍</div>
+      <div style="grid-column: 2 / -1">
+        <div class="video-grid reveal">
+          <article class="video-card">
+            <div class="frame">
+              <span class="badge">Promo</span>
+              <button class="play" aria-label="Play promo">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M6 4.5v15l13-7.5L6 4.5z" fill="currentColor"/></svg>
+              </button>
+            </div>
+            <div class="caption">
+              <span class="ttl">Poke-RL-0 — Project film</span>
+              <span class="sub">Coming soon · 02:30</span>
+            </div>
+          </article>
+          <article class="video-card">
+            <div class="frame">
+              <span class="badge">News</span>
+              <button class="play" aria-label="Play news segment">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M6 4.5v15l13-7.5L6 4.5z" fill="currentColor"/></svg>
+              </button>
+            </div>
+            <div class="caption">
+              <span class="ttl">Xinhua News — Feature interview</span>
+              <span class="sub">Coming soon · 04:10</span>
+            </div>
+          </article>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="method" aria-labelledby="method-h">
+    <div class="wrap section-head">
+      <div class="num">02<br/><b>Overview</b></div>
+      <h2 id="method-h">System overview.</h2>
+    </div>
+    <div class="wrap" style="position:relative; z-index:2">
+      <div class="diagram-panel reveal">
+        <svg class="diagram-svg" viewBox="0 0 1600 720" preserveAspectRatio="xMidYMid meet" role="img" aria-label="System overview: VLM with Action and Value experts trained by TRFO and Distributional TD; four deployment tasks; and a rotating data flywheel that pools into a heterogeneous buffer feeding both trainers">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#14130F"/>
+            </marker>
+            <marker id="arrowAcc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#B5432A"/>
+            </marker>
+            <linearGradient id="taskGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#D8D2C0"/>
+              <stop offset="100%" stop-color="#B5AE99"/>
+            </linearGradient>
+          </defs>
+
+          <!-- Top eyebrow strap per panel -->
+          <text class="diag-eyebrow" x="40"   y="40">A · Architecture</text>
+          <text class="diag-eyebrow" x="760"  y="40">B · Tasks</text>
+          <text class="diag-eyebrow" x="1180" y="40">C · Data Flywheel</text>
+
+          <!-- ============== PANEL A — ARCHITECTURE ============== -->
+
+          <!-- VLM tower (left) -->
+          <rect class="node-box" x="40" y="100" width="170" height="420"/>
+          <text class="box-name-big" x="125" y="320" text-anchor="middle">VLM</text>
+          <text class="box-sub" x="125" y="350" text-anchor="middle">vision · language backbone</text>
+
+          <!-- Action Expert (top right of VLM) -->
+          <rect class="node-box" x="280" y="130" width="220" height="140"/>
+          <text class="box-name" x="390" y="190" text-anchor="middle">Action Expert</text>
+          <text class="box-sub-i" x="390" y="220" text-anchor="middle">flow matching · π</text>
+
+          <!-- Value Expert (bottom right of VLM) -->
+          <rect class="node-box" x="280" y="380" width="220" height="140"/>
+          <text class="box-name" x="390" y="440" text-anchor="middle">Value Expert</text>
+          <text class="box-sub-i" x="390" y="470" text-anchor="middle">distributional V̂</text>
+
+          <!-- VLM → experts -->
+          <path class="d-arrow" d="M210 200 L 280 200"/>
+          <path class="d-arrow" d="M210 450 L 280 450"/>
+
+          <!-- ============== A → B  inference deploy ============== -->
+          <path class="d-flow" d="M500 200 C 600 200 700 175 770 175"/>
+          <text class="flow-label-acc" x="640" y="160" text-anchor="middle">deploy π</text>
+
+          <!-- ============== PANEL B — TASKS (2x2) ============== -->
+          <g transform="translate(770 90)">
+            <!-- Tile 1: Laundry -->
+            <g transform="translate(0 0)">
+              <rect class="node-box" x="0" y="0" width="190" height="220"/>
+              <rect x="0" y="0" width="190" height="170" fill="url(#taskGrad)"/>
+              <text class="coming-soon" x="95" y="92" text-anchor="middle">coming soon</text>
+              <text class="task-name" x="95" y="200" text-anchor="middle">Laundry</text>
+            </g>
+            <!-- Tile 2: Zip Tie -->
+            <g transform="translate(210 0)">
+              <rect class="node-box" x="0" y="0" width="190" height="220"/>
+              <rect x="0" y="0" width="190" height="170" fill="url(#taskGrad)"/>
+              <text class="coming-soon" x="95" y="92" text-anchor="middle">coming soon</text>
+              <text class="task-name" x="95" y="200" text-anchor="middle">Zip Tie</text>
+            </g>
+            <!-- Tile 3: Paper Box -->
+            <g transform="translate(0 240)">
+              <rect class="node-box" x="0" y="0" width="190" height="220"/>
+              <rect x="0" y="0" width="190" height="170" fill="url(#taskGrad)"/>
+              <text class="coming-soon" x="95" y="92" text-anchor="middle">coming soon</text>
+              <text class="task-name" x="95" y="200" text-anchor="middle">Paper Box</text>
+            </g>
+            <!-- Tile 4: Sachet -->
+            <g transform="translate(210 240)">
+              <rect class="node-box" x="0" y="0" width="190" height="220"/>
+              <rect x="0" y="0" width="190" height="170" fill="url(#taskGrad)"/>
+              <text class="coming-soon" x="95" y="92" text-anchor="middle">coming soon</text>
+              <text class="task-name" x="95" y="200" text-anchor="middle">Sachet</text>
+            </g>
+          </g>
+
+          <!-- ============== B → C  rollouts ============== -->
+          <path class="d-flow" d="M1180 200 C 1240 200 1280 170 1298 160"/>
+          <text class="flow-label-acc" x="1240" y="150" text-anchor="middle">rollouts</text>
+
+          <!-- ============== PANEL C — FLYWHEEL + BUFFER ============== -->
+          <g>
+            <!-- Animated rotating ring (the flywheel) -->
+            <circle class="flywheel-ring" cx="1370" cy="290" r="130"/>
+
+            <!-- Three nodes ON the ring (120° apart) — labels only, no sub-text -->
+            <!-- ① top : Rollouts (accent) -->
+            <g transform="translate(1370 160)">
+              <rect class="node-box-acc" x="-72" y="-22" width="144" height="44"/>
+              <text class="ring-name-acc" x="0" y="7" text-anchor="middle">Rollouts</text>
+            </g>
+            <!-- ② lower-right : Corrections -->
+            <g transform="translate(1482.6 355)">
+              <rect class="node-box" x="-78" y="-22" width="156" height="44"/>
+              <text class="ring-name" x="0" y="7" text-anchor="middle">Corrections</text>
+            </g>
+            <!-- ③ lower-left : Demos -->
+            <g transform="translate(1257.4 355)">
+              <rect class="node-box" x="-60" y="-22" width="120" height="44"/>
+              <text class="ring-name" x="0" y="7" text-anchor="middle">Demos</text>
+            </g>
+
+            <!-- Center: Hetero Buffer -->
+            <g transform="translate(1370 290)">
+              <rect class="node-fill-soft" x="-94" y="-40" width="188" height="80"/>
+              <text class="buffer-name" x="0" y="-8" text-anchor="middle">Heterogeneous</text>
+              <text class="buffer-name" x="0" y="14" text-anchor="middle">Buffer</text>
+            </g>
+
+            <!-- Each ring node → buffer (3 short arrows feeding inward) -->
+            <path class="d-arrow" d="M1370 184 L 1370 248"/>
+            <path class="d-arrow" d="M1438 338 L 1410 312"/>
+            <path class="d-arrow" d="M1302 338 L 1330 312"/>
+          </g>
+
+          <!-- ============== RETURN PATH (Buffer → bottom → up the gap → into AE) ============== -->
+          <!-- Single continuous animated trunk: down, left across bottom, up the gap, into AE right edge -->
+          <path class="d-loop"
+                d="M1370 330 L 1370 670 L 620 670 L 620 250 L 500 250" />
+          <text class="flow-label-acc" x="990" y="660" text-anchor="middle">heterogeneous training data</text>
+
+          <!-- TD branch tap: short arrow off the trunk into VE right edge -->
+          <path class="d-arrow-acc" d="M620 510 L 500 510"/>
+
+          <!-- Trainer junctions (paper-soft fills hide the trunk where labels sit) -->
+          <!-- TRFO junction (sits on the trunk, between AE and VE vertically) -->
+          <rect class="trainer-junction" x="510" y="280" width="220" height="98"/>
+          <text class="trainer-trfo" x="620" y="338" text-anchor="middle">TRFO</text>
+          <text class="trainer-sub"  x="620" y="362" text-anchor="middle">trains action expert</text>
+
+          <!-- TD junction -->
+          <rect class="trainer-junction" x="510" y="538" width="220" height="60"/>
+          <text class="trainer-td"  x="620" y="566" text-anchor="middle">Distributional TD</text>
+          <text class="trainer-sub" x="620" y="586" text-anchor="middle">trains value expert</text>
+        </svg>
+
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="pillars-h">
+    <div class="wrap section-head">
+      <div class="num">03<br/><b>Method</b></div>
+      <h2 id="pillars-h">Method.</h2>
+    </div>
+    <div class="wrap section-body">
+      <div class="gutter">▍</div>
+      <div style="grid-column: 2 / -1">
+        <div class="detail-stack reveal">
+
+          <section class="detail-row">
+            <article class="video-card">
+              <div class="frame">
+                <span class="badge">i · Value Expert</span>
+                <button class="play" aria-label="Play value-expert explainer">
+                  <svg viewBox="0 0 24 24" fill="none"><path d="M6 4.5v15l13-7.5L6 4.5z" fill="currentColor"/></svg>
+                </button>
+              </div>
+              <div class="caption">
+                <span class="ttl">Value Expert · explainer</span>
+                <span class="sub">Coming soon · 01:30</span>
+              </div>
+            </article>
+            <article class="pillar">
+              <span class="stamp">i. <b>VALUE EXPERT</b></span>
+              <h3>Sparse labels, dense value.</h3>
+              <p>
+                Each episode is annotated with a single binary success bit — no per-step rewards,
+                no shaped signals, no demonstrator-dependent labels. From this minimal supervision,
+                a distributional value expert learns a smooth curve that <span class="accent">tracks remaining progress to task completion</span>:
+                rising as the policy approaches success, collapsing on the steps that precede failure.
+              </p>
+              <p>
+                The video on the left visualises one such learned value curve over a single episode.
+              </p>
+            </article>
+          </section>
+
+          <section class="detail-row">
+            <article class="video-card">
+              <div class="frame">
+                <span class="badge">ii · TRFO</span>
+                <button class="play" aria-label="Play TRFO explainer">
+                  <svg viewBox="0 0 24 24" fill="none"><path d="M6 4.5v15l13-7.5L6 4.5z" fill="currentColor"/></svg>
+                </button>
+              </div>
+              <div class="caption">
+                <span class="ttl">TRFO objective · explainer</span>
+                <span class="sub">Coming soon · 02:00</span>
+              </div>
+            </article>
+            <article class="pillar">
+              <span class="stamp">ii. <b>TRFO</b></span>
+              <h3>A single, unified objective.</h3>
+              <p>
+                TRFO collapses three previously distinct training regimes —
+                <span class="accent">imitation</span> from demonstrations,
+                <span class="accent">on-policy reinforcement</span> from rollouts, and
+                <span class="accent">safe negative learning</span> from failures —
+                into one weighted flow-matching loss.
+              </p>
+              <div class="formula">
+                $$\mathcal{L}_{\text{TRFO}}(\theta) \;=\; \mathbb{E}_{(o,a)\,\sim\,\mathcal{D}}\,\bigl[\,w(\hat{A})\cdot \ell_\theta(o,a)\,\bigr]$$
+              </div>
+              <p>
+                The signed weight <em>w</em> reduces the objective to standard flow matching when
+                <em>Â</em> &gt; 0, and to a trust-region-bounded repulsion when <em>Â</em> ≤ 0 —
+                staying within the support of a frozen reference policy. One loss, one optimiser,
+                one training pipeline; demos, corrections, and rollouts arrive on the same interface.
+              </p>
+            </article>
+          </section>
+
+          <section class="detail-row">
+            <article class="video-card">
+              <div class="frame">
+                <span class="badge">iii · Blending</span>
+                <button class="play" aria-label="Play inter-chunk blending explainer">
+                  <svg viewBox="0 0 24 24" fill="none"><path d="M6 4.5v15l13-7.5L6 4.5z" fill="currentColor"/></svg>
+                </button>
+              </div>
+              <div class="caption">
+                <span class="ttl">Inter-chunk blending · explainer</span>
+                <span class="sub">Coming soon · 01:10</span>
+              </div>
+            </article>
+            <article class="pillar">
+              <span class="stamp">iii. <b>BLENDING</b></span>
+              <h3>Smoother control, no extra training.</h3>
+              <p>
+                Inter-chunk blending is a <span class="accent">training-free</span>, inference-time
+                procedure that absorbs network and model latency at the seams between consecutive
+                action chunks.
+              </p>
+              <p>
+                The result is jerk-free, millimetre-precise control on the robot —
+                exactly the substrate large-scale deployment and on-policy RL need to collect
+                clean, faithfully on-policy data.
+              </p>
+            </article>
+          </section>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tasks" aria-labelledby="tasks-h">
+    <div class="wrap section-head">
+      <div class="num">04<br/><b>Tasks</b></div>
+      <h2 id="tasks-h">Evaluation tasks.</h2>
+    </div>
+    <div class="wrap section-body">
+      <div class="gutter">▍</div>
+      <div style="grid-column: 2 / -1">
+        <div class="tasks reveal">
+          <article class="task">
+            <div class="frame">
+              <span class="num">T·01</span>
+              <span class="pending">Coming soon</span>
+            </div>
+            <div class="body">
+              <span class="eyebrow">Laundry</span>
+              <h3 class="ttl">T-shirt folding from crumpled poses</h3>
+              <p class="desc">Throughput-driven evaluation. Long-horizon, deformable, recovery-rich.</p>
+              <div class="stat"><span class="v">+XX%</span><span class="l">items / hour, iter 0→3</span></div>
+            </div>
+          </article>
+          <article class="task">
+            <div class="frame">
+              <span class="num">T·02</span>
+              <span class="pending">Coming soon</span>
+            </div>
+            <div class="body">
+              <span class="eyebrow">Zip Tie</span>
+              <h3 class="ttl">Picking and threading a flexible tie</h3>
+              <p class="desc">Millimeter-level precision, contact-rich, prone to slip.</p>
+              <div class="stat"><span class="v">XX → XX%</span><span class="l">success, iter 0→2</span></div>
+            </div>
+          </article>
+          <article class="task">
+            <div class="frame">
+              <span class="num">T·03</span>
+              <span class="pending">Coming soon</span>
+            </div>
+            <div class="body">
+              <span class="eyebrow">Paper Box</span>
+              <h3 class="ttl">Long-horizon multi-stage assembly</h3>
+              <p class="desc">Flat cardboard cutout to closed box. Many failure modes.</p>
+              <div class="stat"><span class="v">XX%</span><span class="l">success, iter 0→N</span></div>
+            </div>
+          </article>
+          <article class="task">
+            <div class="frame">
+              <span class="num">T·04</span>
+              <span class="pending">Coming soon</span>
+            </div>
+            <div class="body">
+              <span class="eyebrow">Sachet</span>
+              <h3 class="ttl">Threading two sachets into a pair</h3>
+              <p class="desc">High dexterity, heavily randomised initial positions.</p>
+              <div class="stat"><span class="v">XX → XX%</span><span class="l">success, iter 0→1</span></div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="results" aria-labelledby="results-h">
+    <div class="wrap section-head">
+      <div class="num">05<br/><b>Results</b></div>
+      <h2 id="results-h">Iterative improvement.</h2>
+    </div>
+    <div class="wrap section-body">
+      <div class="gutter">▍</div>
+      <div style="grid-column: 2 / -1">
+        <div class="results-stack reveal">
+
+          <article class="result-fig">
+            <div class="head">
+              <span class="eyebrow">Figure 1</span>
+              <span class="title">Iterative improvement across four bimanual tasks</span>
+            </div>
+            <div class="frame">
+              <span class="placeholder">Coming soon</span>
+            </div>
+            <p class="caption">Success rate per iteration on Laundry, Zip Tie, Paper Box, and Sachet. Each iteration adds a fresh batch of autonomous rollouts and human corrections; performance increases monotonically across the suite.</p>
+          </article>
+
+          <article class="result-fig">
+            <div class="head">
+              <span class="eyebrow">Figure 2</span>
+              <span class="title">Policy extraction comparison · TRFO vs. HG-DAgger vs. RECAP</span>
+            </div>
+            <div class="frame">
+              <span class="placeholder">Coming soon</span>
+            </div>
+            <p class="caption">Under the same data budget, TRFO outperforms supervised HG-DAgger and advantage-conditioned RECAP — isolating the effect of the policy extraction operator from the underlying data stream.</p>
+          </article>
+
+          <article class="result-fig">
+            <div class="head">
+              <span class="eyebrow">Figure 3</span>
+              <span class="title">Multi-task generalization from pooled iterative data</span>
+            </div>
+            <div class="frame">
+              <span class="placeholder">Coming soon</span>
+            </div>
+            <p class="caption">A single multi-task model trained on pooled iterative data approaches the performance of per-task specialists, suggesting TRFO benefits compound across tasks rather than fragmenting.</p>
+          </article>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="cite" aria-labelledby="cite-h">
+    <div class="wrap section-head">
+      <div class="num">06<br/><b>Cite</b></div>
+      <h2 id="cite-h">Citation.</h2>
+    </div>
+    <div class="wrap section-body">
+      <div class="gutter">▍</div>
+      <div style="grid-column: 2 / -1">
+        <div class="bib reveal">
+          <div class="bar">
+            <span class="l">BibTeX · pokerl0_2026.bib</span>
+            <button class="copy" id="copyBib" aria-label="Copy BibTeX">Copy</button>
+          </div>
+<pre id="bibBody">@article{pokerl0_2026,
+  title   = {Poke-RL-0: Iterative Real-World Post-Training of Flow-Based VLAs
+             with Trust-Region Flow Matching Optimization},
+  author  = {[Author One] and [Author Two] and [Author Three] and
+             [Author Four] and [Senior Author]},
+  journal = {arXiv preprint arXiv:[xxxx.xxxxx]},
+  year    = {2026},
+  note    = {Tsinghua TEA Lab and Poke Robotics}
+}</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap foot">
+      <div class="l">— END</div>
+      <div class="ack">
+        Acknowledgements: this work is a joint effort of the
+        <span style="color:var(--ink)">Tsinghua TEA Lab</span> and
+        <span style="color:var(--ink)">Poke Robotics</span>.
+        We thank our human teleoperators for their patience during HG-DAgger collection and
+        the on-site engineers who kept the bimanual rig running across iterations.
+      </div>
+      <div class="colophon">
+        © 2026 · Set in Source Serif 4 &amp; Geist · Page best viewed on desktop.
+      </div>
+    </div>
+  </footer>
+
+</main>
+
+<script>
+  (function(){
+    const bar = document.getElementById('topbar');
+    const onScroll = () => {
+      if (window.scrollY > 12) bar.classList.add('is-scrolled');
+      else bar.classList.remove('is-scrolled');
+    };
+    document.addEventListener('scroll', onScroll, {passive:true});
+    onScroll();
+  })();
+
+  (function(){
+    const els = document.querySelectorAll('.reveal');
+    if (!('IntersectionObserver' in window)) {
+      els.forEach(e => e.classList.add('is-in'));
+      return;
+    }
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(e => {
+        if (e.isIntersecting) { e.target.classList.add('is-in'); io.unobserve(e.target); }
+      });
+    }, {threshold: 0.12});
+    els.forEach(e => io.observe(e));
+  })();
+
+  (function(){
+    const btn = document.getElementById('copyBib');
+    const body = document.getElementById('bibBody');
+    if (!btn || !body) return;
+    btn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(body.innerText);
+        const old = btn.textContent;
+        btn.textContent = 'Copied ✓';
+        btn.classList.add('is-ok');
+        setTimeout(() => { btn.textContent = old; btn.classList.remove('is-ok'); }, 1600);
+      } catch(_) {}
+    });
+  })();
+</script>
+</body>
+</html>
