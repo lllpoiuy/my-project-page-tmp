@@ -200,10 +200,20 @@
   .thumb-label{ font-family: var(--mono); font-size: 7.5px; letter-spacing: .18em; text-transform: uppercase; fill: var(--ink-3) }
   .hero-grid{
     display:grid;
-    grid-template-columns: 88px 1fr;
+    grid-template-columns: 88px minmax(0, 1fr) auto;
     gap: 0 clamp(20px, 4vw, 56px);
-    align-items: start;
+    align-items: center;
   }
+  .hero-logo{
+    justify-self: end;
+    align-self: center;
+    width: clamp(180px, 24vw, 360px);
+    height: auto;
+    filter: drop-shadow(0 4px 18px rgba(15,24,32,.18)) drop-shadow(0 0 1px rgba(15,24,32,.22));
+    user-select: none;
+    pointer-events: none;
+  }
+  @media (max-width: 960px){ .hero-logo{ display: none } }
   @media (max-width: 720px){ .hero-grid{ grid-template-columns: 1fr } }
 
   .gutter-mark{
@@ -718,7 +728,7 @@
       <div class="gutter-mark">
         00<br/>Index
       </div>
-      <div>
+      <div style="min-width: 0">
         <span class="tag">Tsinghua TEA Lab × Poke Robotics · Preprint 2026</span>
         <h1>
           <span class="paper-id">Poke-RL-0</span>
@@ -754,6 +764,7 @@
         </div>
 
       </div>
+      <img class="hero-logo" src="assets/logos/poke-silver.png" alt="poke"/>
     </div>
   </section>
 
