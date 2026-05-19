@@ -425,6 +425,14 @@
     opacity:.5;
   }
   .video-card video{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block }
+  .video-card .frame img{
+    position:absolute; inset:0; width:100%; height:100%;
+    object-fit:contain; display:block; padding: 10px;
+  }
+  .video-card .frame.has-media{
+    background: var(--paper);
+  }
+  .video-card .frame.has-media::after{ display:none }
   .video-card .badge{
     position:absolute; top:14px; left:14px;
     font-family: var(--mono); font-size: 10px; letter-spacing:.14em; text-transform:uppercase;
@@ -1031,15 +1039,13 @@
 
           <section class="detail-row">
             <article class="video-card">
-              <div class="frame">
+              <div class="frame has-media">
                 <span class="badge">i · Value Expert</span>
-                <button class="play" aria-label="Play value-expert explainer">
-                  <svg viewBox="0 0 24 24" fill="none"><path d="M6 4.5v15l13-7.5L6 4.5z" fill="currentColor"/></svg>
-                </button>
+                <video src="assets/figs/laundry_value.mp4" autoplay loop muted playsinline preload="metadata"></video>
               </div>
               <div class="caption">
-                <span class="ttl">Value Expert · explainer</span>
-                <span class="sub">Coming soon · 01:30</span>
+                <span class="ttl">Value Expert · learned value over an episode</span>
+                <span class="sub">Laundry · single rollout</span>
               </div>
             </article>
             <article class="pillar">
@@ -1059,15 +1065,13 @@
 
           <section class="detail-row">
             <article class="video-card">
-              <div class="frame">
+              <div class="frame has-media">
                 <span class="badge">ii · TRFO</span>
-                <button class="play" aria-label="Play TRFO explainer">
-                  <svg viewBox="0 0 24 24" fill="none"><path d="M6 4.5v15l13-7.5L6 4.5z" fill="currentColor"/></svg>
-                </button>
+                <img src="assets/figs/p2_web_r-blue-37.png" alt="Positive data pulls the policy inward; negative data pushes it outward, with the trust-region scale measured as r_after / r_before."/>
               </div>
               <div class="caption">
-                <span class="ttl">TRFO objective · explainer</span>
-                <span class="sub">Coming soon · 02:00</span>
+                <span class="ttl">TRFO · attract on positives, repel on negatives</span>
+                <span class="sub">Trust-region pull / push</span>
               </div>
             </article>
             <article class="pillar">
